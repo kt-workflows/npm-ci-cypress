@@ -1,0 +1,150 @@
+name: CI
+
+on:
+  workflow_call:
+    inputs:
+      # node versions to use, json array like in matrix.node-version
+      matrix-node-version:
+        description: 'Node.js versions to use, json array like in matrix.node-version'
+        type: string
+      install-script:
+        description: 'Install script to run'
+        type: string
+        default: npm ci
+      check-script:
+        description: 'Check script to run'
+        type: string
+        default: |
+          npm run check
+          npm run lint
+      test-build-script:
+        description: 'Script to build the test server'
+        type: string
+        default: npm run build
+      test-start-script:
+        description: 'Test script to start the server for testing'
+        type: string
+        default: npm run preview
+      test-wait-on:
+        description: 'Wait for the server to be ready'
+        type: string
+        default: http://localhost:5173
+      sonar-script:
+        description: 'SonarQube script to run'
+        type: string
+        default: |
+          npm run build
+          npm run coverage
+      cache-additional-path:
+        description: 'Additional dependency paths to cache. This is a multi-line list of paths.'
+        type: string
+      cache-reset:
+        description: 'Delete the cache if it exists to cache the new one.'
+        type: boolean
+        default: false
+    secrets:
+      SONAR_TOKEN:
+        description: 'SonarQube token'
+        required: false
+
+permissions:
+  contents: read # to fetch code (actions/checkout)
+  actions: write # to cache (actions/cache)
+
+jobs:
+  # echo-inputs:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - run: ${{ tojson(inputs) }}
+  #       shell: cat {0}
+  cache-reset:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ${{ fromJson(inputs.matrix-node-version) }}
+    steps:
+      - uses: actions/checkout@v4
+        if: ${{ inputs.cache-reset || inputs.cache-reset == 'true' }}
+
+      - id: setup-node
+        if: ${{ inputs.cache-reset || inputs.cache-reset == 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - uses: kt-actions/npm-run-script-cache-delete@v1
+        if: ${{ inputs.cache-reset || inputs.cache-reset == 'true' }}
+        with:
+          node-version: ${{ steps.setup-node.outputs.node-version }}
+
+  check:
+    needs: cache-reset
+    if: ${{ inputs.check-script != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: kt-actions/npm-run-script@v1
+        with:
+          matrix-node-version: ${{ inputs.matrix-node-version }}
+          install-script: ${{ inputs.install-script }}
+          run-script: ${{ inputs.check-script }}
+          cache-additional-path: ${{ inputs.cache-additional-path }}
+
+  test:
+    needs: cache-reset
+    if: ${{ inputs.test-start-script != '' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ${{ fromJson(inputs.matrix-node-version) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: kt-actions/npm-run-script@v1
+        if: ${{ inputs.test-build-script != '' }}
+        with:
+          node-version: ${{ matrix.node-version }}
+          install-script: ${{ inputs.install-script }}
+          cache-additional-path: ${{ inputs.cache-additional-path }}
+
+      - uses: cypress-io/github-action@v6
+        with:
+          build: ${{ inputs.test-build-script }}
+          start: ${{ inputs.test-start-script }}
+          wait-on: ${{ inputs.test-wait-on }}
+
+  do-sonar:
+    needs: cache-reset
+    runs-on: ubuntu-latest
+    steps:
+      # Check if sonar-token is set
+      - id: sonar-token
+        run: |
+          if [[ -z "${{ secrets.SONAR_TOKEN }}" ]]; then
+            echo "sonar-token is not set"
+            echo "result=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "sonar-token is set"
+            echo "result=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  sonar:
+    needs: [cache-reset, do-sonar]
+    if: ${{ needs.do-sonar.sonar-token.outputs.result == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: kt-actions/npm-run-script@v1
+        if: ${{ inputs.sonar-script != '' }}
+        with:
+          matrix-node-version: ${{ inputs.matrix-node-version }}
+          install-script: ${{ inputs.install-script }}
+          run-script: ${{ inputs.sonar-script }}
+          cache-additional-path: ${{ inputs.cache-additional-path }}
+
+      - uses: sonarsource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
