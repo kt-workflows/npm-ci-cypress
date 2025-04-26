@@ -42,6 +42,10 @@ on:
         description: 'Delete the cache if it exists to cache the new one.'
         type: boolean
         default: false
+      working-directory:
+        description: 'Working directory to run the workflow in'
+        type: string
+        default: '.'
     secrets:
       SONAR_TOKEN:
         description: 'SonarQube token'
@@ -70,6 +74,7 @@ jobs:
           run-script: ${{ inputs.check-script }}
           cache-additional-path: ${{ inputs.cache-additional-path }}
           cache-reset: ${{ inputs.cache-reset }}
+          working-directory: ${{ inputs.working-directory }}
 
   test:
     if: ${{ inputs.test-start-script != '' }}
@@ -80,19 +85,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Just install the dependencies
+      # build will be done by the cypress action
       - uses: kt-actions/npm-run-script@v1
-        if: ${{ inputs.test-build-script != '' }}
         with:
           node-version: ${{ matrix.node-version }}
           install-script: ${{ inputs.install-script }}
           cache-additional-path: ${{ inputs.cache-additional-path }}
           cache-reset: ${{ inputs.cache-reset }}
+          working-directory: ${{ inputs.working-directory }}
 
       - uses: cypress-io/github-action@v6
         with:
           build: ${{ inputs.test-build-script }}
           start: ${{ inputs.test-start-script }}
           wait-on: ${{ inputs.test-wait-on }}
+          working-directory: ${{ inputs.working-directory }}
 
   do-sonar:
     runs-on: ubuntu-latest
@@ -125,6 +133,7 @@ jobs:
           run-script: ${{ inputs.sonar-script }}
           cache-additional-path: ${{ inputs.cache-additional-path }}
           cache-reset: ${{ inputs.cache-reset }}
+          working-directory: ${{ inputs.working-directory }}
 
       - uses: sonarsource/sonarqube-scan-action@v5
         env:
